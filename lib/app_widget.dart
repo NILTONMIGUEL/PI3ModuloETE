@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:pi_3_modulo/pages/page_home.dart';
+import 'package:pi_3_modulo/pages/splash_screen.dart';
 
 class AppWidget extends StatelessWidget {
   const AppWidget({super.key});
@@ -10,7 +11,8 @@ class AppWidget extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: "consumindo a api",
       initialRoute: '/',
-      routes: {'/': (context) => PageHome()},
+      routes: {'/comidas': (context) => PageHome(),
+      '/':(context) => SplashScreen()},
     );
   }
 }
