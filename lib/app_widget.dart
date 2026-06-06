@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:pi_3_modulo/pages/page_carrinho.dart';
 import 'package:pi_3_modulo/pages/page_home.dart';
 import 'package:pi_3_modulo/pages/splash_screen.dart';
 
@@ -12,7 +13,8 @@ class AppWidget extends StatelessWidget {
       title: "consumindo a api",
       initialRoute: '/',
       routes: {'/comidas': (context) => PageHome(),
-      '/':(context) => SplashScreen()},
+      '/':(context) => SplashScreen(),
+      '/carrinho' :(context) => PageCarrinho()},
     );
   }
 }
