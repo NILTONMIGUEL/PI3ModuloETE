@@ -22,17 +22,17 @@ class _PageCarrinhoState extends State<PageCarrinho>
   double totalCarrinho = 0.0;
   bool carregando = true;
 
-  // FUNÇÃO INTELIGENTE: Descobre o IP correto do servidor baseado no dispositivo de teste
+  // FUNÇÃO INTELIGENTE: Altera o IP dinamicamente para o dispositivo de teste
   String get obterBaseUrl {
     if (kIsWeb) {
-      return 'http://localhost:8000/api/carrinho'; // Se testar no navegador do PC
+      return 'http://localhost:8000';
     }
     try {
       if (Platform.isAndroid) {
-        return 'http://10.0.2.2:8000'; // Se testar no emulador Android
+        return 'http://10.0.2.2:8000';
       }
     } catch (_) {}
-    return 'http://localhost:8000'; // Padrão para Windows/iOS
+    return 'http://localhost:8000';
   }
 
   @override
@@ -44,42 +44,119 @@ class _PageCarrinhoState extends State<PageCarrinho>
       duration: const Duration(seconds: 4),
     )..repeat();
 
-    carregarCarrinho();
+    carregarCarrinhoInicial();
   }
 
-  // Função que conecta com a API do Laravel
-  Future<void> carregarCarrinho() async {
+  // Busca os dados da API apenas ao entrar na tela (com loading)
+  Future<void> carregarCarrinhoInicial() async {
     if (!mounted) return;
     setState(() => carregando = true);
-    
-    print('--- INICIANDO BUSCA NO LARAVEL ---');
-    
+    await atualizarDadosDoServidor();
+    if (mounted) {
+      setState(() => carregando = false);
+    }
+  }
+
+  // Função interna auxiliar que baixa os dados do banco
+  Future<void> atualizarDadosDoServidor() async {
     try {
-      // Monta o link dinamicamente (ex: http://localhost:8000/api/carrinho ou http://10.0.2.2:8000/api/carrinho)
       final String urlCompleta = '$obterBaseUrl/api/carrinho';
-      print('Buscando dados em: $urlCompleta');
-
       final response = await dio.get(urlCompleta);
-      
-      print('Status recebido: ${response.statusCode}');
-      print('Dados brutos da API: ${response.data}');
 
-      if (response.statusCode == 200 && response.data != null) {
+      if (response.statusCode == 200 && response.data != null && mounted) {
         setState(() {
           itensCarrinho = List.from(response.data['itens'] ?? []);
           totalCarrinho = double.tryParse(response.data['total_carrinho'].toString()) ?? 0.0;
         });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Itens carregados: ${itensCarrinho.length}')),
-        );
       }
     } catch (e) {
-      print('ERRO CRÍTICO NO GET: $e');
-    } finally {
-      if (mounted) {
-        setState(() => carregando = false);
-      }
+      debugPrint('Erro ao sincronizar com servidor: $e');
+    }
+  }
+
+  // CORREÇÃO AQUI: Altera o valor na tela NA HORA, sem dar loading na página inteira
+  // Future<void> alterarQuantidade(int produtoId, int novaQuantidade) async {
+  //   if (novaQuantidade < 1) {
+  //     excluirItem(produtoId);
+  //     return;
+  //   }
+
+  //   // 1. Descobre qual item o usuário clicou e calcula a diferença para a API
+  //   final int index = itensCarrinho.indexWhere((item) => item['produto']['id'] == produtoId);
+  //   if (index == -1) return;
+
+  //   final int qtdAntiga = int.tryParse(itensCarrinho[index]['quantidade'].toString()) ?? 1;
+  //   final int diferencaQtd = novaQuantidade - qtdAntiga;
+  //   final double precoUnidade = double.tryParse(itensCarrinho[index]['produto']['preco'].toString()) ?? 0.0;
+
+  //   // 2. ATUALIZAÇÃO LOCAL IMEDIATA (Sem refresh de tela completa)
+  //   setState(() {
+  //     itensCarrinho[index]['quantidade'] = novaQuantidade;
+  //     itensCarrinho[index]['subtotal'] = novaQuantidade * precoUnidade;
+      
+  //     // Recalcula o total geral do carrinho somando os subtotais locais
+  //     totalCarrinho = itensCarrinho.fold(0.0, (total, item) => total + (double.tryParse(item['subtotal'].toString()) ?? 0.0));
+  //   });
+
+  //   // 3. Atualiza o banco de dados em silêncio (background)
+  //   try {
+  //     await dio.post('$obterBaseUrl/api/carrinho/adicionar', data: {
+  //       'cliente': 1,
+  //       'produto_id': produtoId,
+  //       'quantidade': diferencaQtd,
+  //     });
+  //     // Sincroniza discretamente para garantir que as dízimas/subtotais do Laravel batam
+  //     atualizarDadosDoServidor();
+  //   } catch (e) {
+  //     debugPrint('Erro ao salvar nova quantidade no servidor: $e');
+  //   }
+  // }
+  Future<void> alterarQuantidade(int produtoId, int novaQuantidade) async {
+    if (novaQuantidade < 1) {
+      excluirItem(produtoId);
+      return;
+    }
+
+    final int index = itensCarrinho.indexWhere((item) => item['produto']['id'] == produtoId);
+    if (index == -1) return;
+
+    final double precoUnidade = double.tryParse(itensCarrinho[index]['produto']['preco'].toString()) ?? 0.0;
+
+    // 1. Atualiza na tela na mesma hora
+    setState(() {
+      itensCarrinho[index]['quantidade'] = novaQuantidade;
+      itensCarrinho[index]['subtotal'] = novaQuantidade * precoUnidade;
+      totalCarrinho = itensCarrinho.fold(0.0, (total, item) => total + (double.tryParse(item['subtotal'].toString()) ?? 0.0));
+    });
+
+    // 2. Envia para a NOVA rota do Laravel salvar em definitivo
+    try {
+      await dio.post('$obterBaseUrl/api/carrinho/atualizar', data: {
+        'cliente': 1,
+        'produto_id': produtoId,
+        'quantidade': novaQuantidade, // Passa o número final da tela direto!
+      });
+    } catch (e) {
+      debugPrint('Erro ao salvar nova quantidade no servidor: $e');
+    }
+  }
+
+  // CORREÇÃO AQUI: Remove o card na hora da árvore de componentes
+  Future<void> excluirItem(int produtoId) async {
+    // 1. Remove localmente para sumir da tela instantaneamente
+    setState(() {
+      itensCarrinho.removeWhere((item) => item['produto']['id'] == produtoId);
+      totalCarrinho = itensCarrinho.fold(0.0, (total, item) => total + (double.tryParse(item['subtotal'].toString()) ?? 0.0));
+    });
+
+    // 2. Avisa o Laravel em segundo plano
+    try {
+      await dio.post('$obterBaseUrl/api/carrinho/remover', data: {
+        'cliente': 1,
+        'produto_id': produtoId,
+      });
+    } catch (e) {
+      debugPrint('Erro ao excluir no servidor: $e');
     }
   }
 
@@ -129,7 +206,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  // TÍTULO DA TELA
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 10),
                     child: Text(
@@ -143,17 +219,12 @@ class _PageCarrinhoState extends State<PageCarrinho>
                     ),
                   ),
 
-                  // LISTA DOS ITENS EM COLUNAS ORDENADAS
+                  // LISTA OU ESTADO VAZIO
                   Expanded(
                     child: carregando
                         ? const Center(child: CircularProgressIndicator(color: Colors.orange))
                         : itensCarrinho.isEmpty
-                            ? const Center(
-                                child: Text(
-                                  "Seu carrinho está vazio!",
-                                  style: TextStyle(color: Colors.white70),
-                                ),
-                              )
+                            ? _buildCarrinhoVazio()
                             : ListView.builder(
                                 controller: _scrollController,
                                 itemCount: itensCarrinho.length,
@@ -166,7 +237,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
                               ),
                   ),
 
-                  // RODAPÉ COM PREÇO TOTAL E BOTÕES
                   if (!carregando && itensCarrinho.isNotEmpty) _buildFooterCarrinho(),
                 ],
               ),
@@ -177,211 +247,30 @@ class _PageCarrinhoState extends State<PageCarrinho>
     );
   }
 
-  // // WIDGET DO CARD DE ITEM TOTALMENTE CORRIGIDO E AUTOMATIZADO
-  // Widget _buildItemCarrinhoCard(dynamic produto, dynamic item) {
-  //   String nomeArquivoAutomatico = '';
-  //   if (produto != null && produto['imagem'] != null) {
-  //     nomeArquivoAutomatico = produto['imagem'].toString();
-  //   }
-
-  //   String urlImagemFinal = '';
-
-  //   if (nomeArquivoAutomatico.isNotEmpty && !nomeArquivoAutomatico.startsWith('http')) {
-  //     // Limpeza de resíduos de caminhos do banco de dados
-  //     if (nomeArquivoAutomatico.startsWith('/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(1);
-  //     if (nomeArquivoAutomatico.startsWith('api/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(4);
-  //     if (nomeArquivoAutomatico.startsWith('public/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(7);
-  //     if (nomeArquivoAutomatico.startsWith('storage/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(8);
-  //     if (nomeArquivoAutomatico.startsWith('produtos/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(9);
-
-  //     // Junta o IP dinâmico correto com a pasta pública do Laravel onde está sua foto
-  //     urlImagemFinal = '$obterBaseUrl/storage/produtos/$nomeArquivoAutomatico';
-  //   } else if (nomeArquivoAutomatico.startsWith('http')) {
-  //     urlImagemFinal = nomeArquivoAutomatico;
-  //   }
-
-  //   print('Link gerado para a imagem: $urlImagemFinal');
-
-  //   final double subtotal = double.tryParse(item['subtotal'].toString()) ?? 0.0;
-
-  //   return Container(
-  //     margin: const EdgeInsets.only(bottom: 12),
-  //     padding: const EdgeInsets.all(10),
-  //     decoration: BoxDecoration(
-  //       color: const Color(0xffFF7A00).withOpacity(0.9),
-  //       borderRadius: BorderRadius.circular(12),
-  //       border: Border.all(color: const Color(0xffDDF7FF), width: 1),
-  //     ),
-  //     child: Row(
-  //       children: [
-  //         // IMAGEM DO PRODUTO REGENERADA
-  //         ClipRRect(
-  //           borderRadius: BorderRadius.circular(8),
-  //           child: urlImagemFinal.isNotEmpty
-  //               ? Image.network(
-  //                   urlImagemFinal,
-  //                   width: 70,
-  //                   height: 70,
-  //                   fit: BoxFit.cover,
-  //                   errorBuilder: (context, error, stackTrace) => Container(
-  //                     width: 70,
-  //                     height: 70,
-  //                     color: Colors.black26,
-  //                     child: const Icon(Icons.fastfood, color: Colors.white),
-  //                   ),
-  //                 )
-  //               : Container(
-  //                   width: 70,
-  //                   height: 70,
-  //                   color: Colors.black26,
-  //                   child: const Icon(Icons.fastfood, color: Colors.white),
-  //                 ),
-  //         ),
-  //         const SizedBox(width: 12),
-
-  //         // INFORMAÇÕES DO PRODUTO (NOME E QUANTIDADE)
-  //         Expanded(
-  //           child: Column(
-  //             crossAxisAlignment: CrossAxisAlignment.start,
-  //             children: [
-  //               Text(
-  //                 produto != null ? (produto['nome'] ?? 'Sem nome') : 'Sem nome',
-  //                 style: const TextStyle(
-  //                   color: Colors.white,
-  //                   fontWeight: FontWeight.bold,
-  //                   fontSize: 15,
-  //                 ),
-  //                 maxLines: 1,
-  //                 overflow: TextOverflow.ellipsis,
-  //               ),
-  //               const SizedBox(height: 4),
-  //               Text(
-  //                 "Qtd: ${item['quantidade']}",
-  //                 style: const TextStyle(color: Colors.white, fontSize: 13),
-  //               ),
-  //             ],
-  //           ),
-  //         ),
-
-  //         // PREÇO CALCULADO (SUBTOTAL)
-  //         Text(
-  //           "R\$ ${subtotal.toStringAsFixed(2)}",
-  //           style: const TextStyle(
-  //             color: Colors.white,
-  //             fontWeight: FontWeight.bold,
-  //             fontSize: 16,
-  //           ),
-  //         ),
-  //       ],
-  //     ),
-  //   );
-  // }
-  // WIDGET DO CARD DE ITEM COM DIRECIONAMENTO DIRETO PARA A PASTA PÚBLICA
-  Widget _buildItemCarrinhoCard(dynamic produto, dynamic item) {
-    String nomeArquivoAutomatico = '';
-    if (produto != null && produto['imagem'] != null) {
-      nomeArquivoAutomatico = produto['imagem'].toString();
-    }
-
-    String urlImagemFinal = '';
-
-    if (nomeArquivoAutomatico.isNotEmpty && !nomeArquivoAutomatico.startsWith('http')) {
-      // Limpeza profunda de qualquer prefixo residual que o banco de dados possa conter
-      if (nomeArquivoAutomatico.startsWith('/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(1);
-      if (nomeArquivoAutomatico.startsWith('api/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(4);
-      if (nomeArquivoAutomatico.startsWith('public/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(7);
-      if (nomeArquivoAutomatico.startsWith('storage/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(8);
-      if (nomeArquivoAutomatico.startsWith('produtos/')) nomeArquivoAutomatico = nomeArquivoAutomatico.substring(9);
-
-      // SOLUÇÃO: Força o caminho direto pela pasta física mapeada pelo servidor local
-      urlImagemFinal = '$obterBaseUrl/storage/produtos/$nomeArquivoAutomatico';
-    } else if (nomeArquivoAutomatico.startsWith('http')) {
-      urlImagemFinal = nomeArquivoAutomatico;
-    }
-
-    print('Link gerado para a imagem: $urlImagemFinal');
-
-    final double subtotal = double.tryParse(item['subtotal'].toString()) ?? 0.0;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xffFF7A00).withOpacity(0.9),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xffDDF7FF), width: 1),
-      ),
-      child: Row(
+  Widget _buildCarrinhoVazio() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // IMAGEM DO PRODUTO REGENERADA
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: urlImagemFinal.isNotEmpty
-                ? Image.network(
-                    urlImagemFinal,
-                    width: 70,
-                    height: 70,
-                    fit: BoxFit.cover,
-                    // Se o emulador ainda bloquear o download, tentamos a URL alternativa em tempo de execução
-                    errorBuilder: (context, error, stackTrace) {
-                      // Segunda tentativa de link contornando o atalho do storage
-                      final urlAlternativa = urlImagemFinal.replaceAll('/storage/', '/public/');
-                      
-                      return Image.network(
-                        urlAlternativa,
-                        width: 70,
-                        height: 70,
-                        fit: BoxFit.cover,
-                        // Caso ambas falhem (arquivo com nome alterado no disco), exibe o ícone de fallback
-                        errorBuilder: (ctx, err, stack) => Container(
-                          width: 70,
-                          height: 70,
-                          color: Colors.black26,
-                          child: const Icon(Icons.fastfood, color: Colors.white),
-                        ),
-                      );
-                    },
-                  )
-                : Container(
-                    width: 70,
-                    height: 70,
-                    color: Colors.black26,
-                    child: const Icon(Icons.fastfood, color: Colors.white),
-                  ),
+          const Icon(Icons.shopping_cart_outlined, size: 70, color: Colors.white60),
+          const SizedBox(height: 16),
+          const Text(
+            "Seu carrinho está vazio!",
+            style: TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.w500),
           ),
-          const SizedBox(width: 12),
-
-          // INFORMAÇÕES DO PRODUTO (NOME E QUANTIDADE)
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  produto != null ? (produto['nome'] ?? 'Sem nome') : 'Sem nome',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  "Qtd: ${item['quantidade']}",
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                ),
-              ],
+          const SizedBox(height: 25),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back, color: Colors.orange),
+            label: const Text(
+              "Voltar para a Loja",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
-          ),
-
-          // PREÇO CALCULADO (SUBTOTAL)
-          Text(
-            "R\$ ${subtotal.toStringAsFixed(2)}",
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.orange,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
             ),
           ),
         ],
@@ -389,57 +278,183 @@ class _PageCarrinhoState extends State<PageCarrinho>
     );
   }
 
-  // WIDGET DO RODAPÉ COM EXIBIÇÃO DO TOTAL E OS BOTÕES
+  Widget _buildItemCarrinhoCard(dynamic produto, dynamic item) {
+    String urlImagemFinal = '';
+    if (produto != null && produto['imagem'] != null) {
+      urlImagemFinal = produto['imagem'].toString();
+    }
+
+    if (urlImagemFinal.contains('localhost')) {
+      urlImagemFinal = urlImagemFinal.replaceAll('http://localhost:8000', obterBaseUrl);
+    }
+
+    final int produtoId = produto != null ? (produto['id'] ?? 0) : 0;
+    final int qtdAtual = int.tryParse(item['quantidade'].toString()) ?? 1;
+    final double subtotal = double.tryParse(item['subtotal'].toString()) ?? 0.0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xffFF7A00).withOpacity(0.9),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xffDDF7FF), width: 1),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: urlImagemFinal.isNotEmpty
+                ? Image.network(
+                    urlImagemFinal,
+                    width: 60,
+                    height: 60,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      width: 60,
+                      height: 60,
+                      color: Colors.black26,
+                      child: const Icon(Icons.fastfood, color: Colors.white),
+                    ),
+                  )
+                : Container(
+                    width: 60,
+                    height: 60,
+                    color: Colors.black26,
+                    child: const Icon(Icons.fastfood, color: Colors.white),
+                  ),
+          ),
+          const SizedBox(width: 10),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  produto != null ? (produto['nome'] ?? 'Sem nome') : 'Sem nome',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    _buildBotaoQtd(
+                      icon: Icons.remove,
+                      onTap: () => alterarQuantidade(produtoId, qtdAtual - 1),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        "$qtdAtual",
+                        style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    _buildBotaoQtd(
+                      icon: Icons.add,
+                      onTap: () => alterarQuantidade(produtoId, qtdAtual + 1),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                "R\$ ${subtotal.toStringAsFixed(2)}",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 4),
+              GestureDetector(
+                onTap: () => excluirItem(produtoId),
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(
+                    Icons.delete_forever,
+                    color: Color(0xffDDF7FF),
+                    size: 22,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBotaoQtd({required IconData icon, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.25),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: Colors.white, size: 16),
+      ),
+    );
+  }
+
   Widget _buildFooterCarrinho() {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        const Divider(color: Colors.white30, height: 25),
-        
+        const Divider(color: Colors.white30, height: 20),
         Row(
+          key: ValueKey(totalCarrinho), // Força o rodapé a atualizar o texto do valor
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
               "Total:",
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
             ),
             Text(
               "R\$ ${totalCarrinho.toStringAsFixed(2)}",
-              style: const TextStyle(color: Colors.greenAccent, fontSize: 22, fontWeight: FontWeight.bold),
+              style: const TextStyle(color: Colors.greenAccent, fontSize: 20, fontWeight: FontWeight.bold),
             ),
           ],
         ),
-        const SizedBox(height: 15),
-
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                },
+                onPressed: () => Navigator.pop(context),
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: Colors.white),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                child: const Text("Cancelar", style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text("Cancelar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               ),
             ),
-            const SizedBox(width: 12),
-            
+            const SizedBox(width: 10),
             Expanded(
               child: ElevatedButton(
-                onPressed: () {
-                  // Lógica para finalizar a compra no futuro
-                },
+                onPressed: () {},
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,
                   foregroundColor: Colors.orange,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                child: const Text("Comprar", style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text("Comprar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               ),
             ),
           ],
