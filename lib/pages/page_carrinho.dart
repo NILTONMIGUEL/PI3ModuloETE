@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:pi_3_modulo/custons_edit/neonBorderPainter.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 class PageCarrinho extends StatefulWidget {
   const PageCarrinho({super.key});
@@ -16,7 +19,8 @@ class _PageCarrinhoState extends State<PageCarrinho>
   late AnimationController _controller;
   final ScrollController _scrollController = ScrollController();
   final dio = Dio();
-
+  int Cliente = 1;
+  
   // Estados da página
   List<dynamic> itensCarrinho = [];
   double totalCarrinho = 0.0;
@@ -47,7 +51,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
     carregarCarrinhoInicial();
   }
 
-  // Busca os dados da API apenas ao entrar na tela (com loading)
   Future<void> carregarCarrinhoInicial() async {
     if (!mounted) return;
     setState(() => carregando = true);
@@ -57,11 +60,10 @@ class _PageCarrinhoState extends State<PageCarrinho>
     }
   }
 
-  // Função interna auxiliar que baixa os dados do banco
   Future<void> atualizarDadosDoServidor() async {
     try {
-      final String urlCompleta = '$obterBaseUrl/api/carrinho';
-      final response = await dio.get(urlCompleta);
+      final String url = '$obterBaseUrl/api/carrinho';
+      final response = await dio.get(url);
 
       if (response.statusCode == 200 && response.data != null && mounted) {
         setState(() {
@@ -74,43 +76,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
     }
   }
 
-  // CORREÇÃO AQUI: Altera o valor na tela NA HORA, sem dar loading na página inteira
-  // Future<void> alterarQuantidade(int produtoId, int novaQuantidade) async {
-  //   if (novaQuantidade < 1) {
-  //     excluirItem(produtoId);
-  //     return;
-  //   }
-
-  //   // 1. Descobre qual item o usuário clicou e calcula a diferença para a API
-  //   final int index = itensCarrinho.indexWhere((item) => item['produto']['id'] == produtoId);
-  //   if (index == -1) return;
-
-  //   final int qtdAntiga = int.tryParse(itensCarrinho[index]['quantidade'].toString()) ?? 1;
-  //   final int diferencaQtd = novaQuantidade - qtdAntiga;
-  //   final double precoUnidade = double.tryParse(itensCarrinho[index]['produto']['preco'].toString()) ?? 0.0;
-
-  //   // 2. ATUALIZAÇÃO LOCAL IMEDIATA (Sem refresh de tela completa)
-  //   setState(() {
-  //     itensCarrinho[index]['quantidade'] = novaQuantidade;
-  //     itensCarrinho[index]['subtotal'] = novaQuantidade * precoUnidade;
-      
-  //     // Recalcula o total geral do carrinho somando os subtotais locais
-  //     totalCarrinho = itensCarrinho.fold(0.0, (total, item) => total + (double.tryParse(item['subtotal'].toString()) ?? 0.0));
-  //   });
-
-  //   // 3. Atualiza o banco de dados em silêncio (background)
-  //   try {
-  //     await dio.post('$obterBaseUrl/api/carrinho/adicionar', data: {
-  //       'cliente': 1,
-  //       'produto_id': produtoId,
-  //       'quantidade': diferencaQtd,
-  //     });
-  //     // Sincroniza discretamente para garantir que as dízimas/subtotais do Laravel batam
-  //     atualizarDadosDoServidor();
-  //   } catch (e) {
-  //     debugPrint('Erro ao salvar nova quantidade no servidor: $e');
-  //   }
-  // }
   Future<void> alterarQuantidade(int produtoId, int novaQuantidade) async {
     if (novaQuantidade < 1) {
       excluirItem(produtoId);
@@ -122,34 +87,30 @@ class _PageCarrinhoState extends State<PageCarrinho>
 
     final double precoUnidade = double.tryParse(itensCarrinho[index]['produto']['preco'].toString()) ?? 0.0;
 
-    // 1. Atualiza na tela na mesma hora
     setState(() {
+      itensCarrinho[index]['whitespace'] = novaQuantidade;
       itensCarrinho[index]['quantidade'] = novaQuantidade;
       itensCarrinho[index]['subtotal'] = novaQuantidade * precoUnidade;
       totalCarrinho = itensCarrinho.fold(0.0, (total, item) => total + (double.tryParse(item['subtotal'].toString()) ?? 0.0));
     });
 
-    // 2. Envia para a NOVA rota do Laravel salvar em definitivo
     try {
       await dio.post('$obterBaseUrl/api/carrinho/atualizar', data: {
         'cliente': 1,
         'produto_id': produtoId,
-        'quantidade': novaQuantidade, // Passa o número final da tela direto!
+        'quantidade': novaQuantidade,
       });
     } catch (e) {
       debugPrint('Erro ao salvar nova quantidade no servidor: $e');
     }
   }
 
-  // CORREÇÃO AQUI: Remove o card na hora da árvore de componentes
   Future<void> excluirItem(int produtoId) async {
-    // 1. Remove localmente para sumir da tela instantaneamente
     setState(() {
       itensCarrinho.removeWhere((item) => item['produto']['id'] == produtoId);
       totalCarrinho = itensCarrinho.fold(0.0, (total, item) => total + (double.tryParse(item['subtotal'].toString()) ?? 0.0));
     });
 
-    // 2. Avisa o Laravel em segundo plano
     try {
       await dio.post('$obterBaseUrl/api/carrinho/remover', data: {
         'cliente': 1,
@@ -172,7 +133,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
     return Scaffold(
       body: Stack(
         children: [
-          // BACKGROUND IMAGE
           Positioned.fill(
             child: ColorFiltered(
               colorFilter: ColorFilter.mode(
@@ -188,8 +148,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
               ),
             ),
           ),
-          
-          // EFEITO NEON BORDER
           AnimatedBuilder(
             animation: _controller,
             builder: (context, child) {
@@ -199,8 +157,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
               );
             },
           ),
-          
-          // CONTEÚDO PRINCIPAL
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -218,8 +174,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
                       ),
                     ),
                   ),
-
-                  // LISTA OU ESTADO VAZIO
                   Expanded(
                     child: carregando
                         ? const Center(child: CircularProgressIndicator(color: Colors.orange))
@@ -231,12 +185,10 @@ class _PageCarrinhoState extends State<PageCarrinho>
                                 itemBuilder: (context, index) {
                                   final item = itensCarrinho[index];
                                   final produto = item['produto'];
-
                                   return _buildItemCarrinhoCard(produto, item);
                                 },
                               ),
                   ),
-
                   if (!carregando && itensCarrinho.isNotEmpty) _buildFooterCarrinho(),
                 ],
               ),
@@ -325,7 +277,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
                   ),
           ),
           const SizedBox(width: 10),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -364,7 +315,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
               ],
             ),
           ),
-
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisAlignment: MainAxisAlignment.center,
@@ -416,7 +366,7 @@ class _PageCarrinhoState extends State<PageCarrinho>
       children: [
         const Divider(color: Colors.white30, height: 20),
         Row(
-          key: ValueKey(totalCarrinho), // Força o rodapé a atualizar o texto do valor
+          key: ValueKey(totalCarrinho),
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
@@ -447,7 +397,68 @@ class _PageCarrinhoState extends State<PageCarrinho>
             const SizedBox(width: 10),
             Expanded(
               child: ElevatedButton(
-                onPressed: () {},
+                onPressed: () async {
+                  setState(() => carregando = true);
+
+                  final String rotaFinal = '$obterBaseUrl/api/carrinho/comprar';
+                  
+                  try {
+                    final response = await dio.post(
+                      rotaFinal,
+                      data: {
+                        'cliente': Cliente,
+                      },
+                    );
+
+                    if ((response.statusCode == 201 || response.statusCode == 200) && mounted) {
+                      final int idGerado = response.data['compra_id'] ?? 0;
+                      final int clienteAtual = Cliente;
+
+                      // Abre a interface do PDF nativa
+                      await gerarPdfCompraLocal(idGerado, clienteAtual);
+                      
+                      setState(() {
+                        itensCarrinho = [];
+                        totalCarrinho = 0.0;
+                        carregando = false;
+                        Cliente++;
+                      });
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Compra finalizada com sucesso!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      setState(() => carregando = false);
+                    }
+
+                    if (e is DioException && e.response != null) {
+                      String erroFinal = 'Erro desconhecido no servidor';
+                      
+                      if (e.response?.data is Map) {
+                        erroFinal = e.response?.data['erro_real'] ?? 'Erro no servidor';
+                      } else {
+                        erroFinal = (e.response?.data?.toString() ?? '').substring(0, 100).replaceAll(RegExp(r'<[^>]*>'), '');
+                      }
+                      
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Erro: $erroFinal'),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 8),
+                        ),
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Não foi possível conectar ao servidor.')),
+                      );
+                    }
+                  }
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,
                   foregroundColor: Colors.orange,
@@ -461,5 +472,87 @@ class _PageCarrinhoState extends State<PageCarrinho>
         ),
       ],
     );
+  }
+
+  Future<void> gerarPdfCompraLocal(int idCompra, int idCliente) async {
+    final pdf = pw.Document();
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        build: (pw.Context context) {
+          return pw.Padding(
+            padding: const pw.EdgeInsets.all(20),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start, // 1. CORRIGIDO: Nome correto da propriedade no pacote PDF
+              children: [
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.all(15),
+                  decoration: const pw.BoxDecoration(color: PdfColors.orange),
+                  child: pw.Center(
+                    child: pw.Text(
+                      'COMPROVANTE DE COMPRA',
+                      style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+                    ),
+                  ),
+                ),
+                pw.SizedBox(height: 20),
+                pw.Text('Compra ID: #$idCompra', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                pw.Text('Cliente ID: #$idCliente'),
+                pw.Text('Status: Pago / Finalizado'),
+                pw.Text('Data: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}'),
+                pw.SizedBox(height: 20),
+                pw.Divider(color: PdfColors.grey300),
+                pw.SizedBox(height: 10),
+                pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+                  children: [
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                      children: [
+                        pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Produto', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                        pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Qtd', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                        pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Subtotal', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      ],
+                    ),
+                    // 2. CORRIGIDO: Mapeamento tipado explicitamente como TableRow para o pw.Table aceitar
+                    ...itensCarrinho.map<pw.TableRow>((item) {
+                      final produto = item['produto'];
+                      return pw.TableRow(
+                        children: [
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6), 
+                            child: pw.Text(produto != null ? (produto['nome'] ?? 'Sem nome') : 'Sem nome')
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6), 
+                            child: pw.Text(item['whitespace']?.toString() ?? item['quantidade']?.toString() ?? '1')
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6), 
+                            child: pw.Text('R\$ ${double.parse(item['subtotal'].toString()).toStringAsFixed(2)}')
+                          ),
+                        ],
+                      );
+                    }).toList(), // Garante a conversão para lista limpa
+                  ],
+                ),
+                pw.SizedBox(height: 30),
+                pw.Align(
+                  alignment: pw.Alignment.centerRight,
+                  child: pw.Text(
+                    'TOTAL COMPRA: R\$ ${totalCarrinho.toStringAsFixed(2)}',
+                    style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold, color: PdfColors.orange),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
   }
 }
