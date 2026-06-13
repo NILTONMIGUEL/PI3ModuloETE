@@ -5,10 +5,14 @@ import 'package:pi_3_modulo/pages/page_carrinho.dart';
 
 class ProductCard extends StatefulWidget {
   final Produto produto;
+  final int numeroFichaAtual; // Recebe o número da ficha atual da tela pai
+  final ValueChanged<int> onFichaAtualizada; // Callback para avisar a tela pai que a ficha mudou
 
   const ProductCard({
     super.key,
     required this.produto,
+    required this.numeroFichaAtual,
+    required this.onFichaAtualizada,
   });
 
   @override
@@ -17,89 +21,60 @@ class ProductCard extends StatefulWidget {
 
 class _ProductCardState extends State<ProductCard> {
   int quantidade = 1;
-  int userID = 1;
 
   Future<void> adicionarAoCarrinho() async {
-  final dio = Dio();
-  
-  // Substitua pelo IP da sua máquina onde o Laravel está rodando
-  final String url = 'http://localhost:8000/api/carrinho/adicionar';
+    final dio = Dio();
+    final String url = 'http://localhost:8000/api/carrinho/adicionar';
 
-  try {
-    // O Dio já converte o Map para JSON automaticamente no corpo (data)
-    final response = await dio.post(
-      url,
-      data: {
-        'cliente' : userID,
-        'produto_id': widget.produto.id, // ID do seu model Produto
-        'quantidade': quantidade,        // Estado interno do contador
-                         // Preencha se tiver autenticação
-      },
-      options: Options(
-        headers: {
-          'Accept': 'application/json', // Informa ao Laravel que queremos resposta em JSON
+    try {
+      final response = await dio.post(
+        url,
+        data: {
+          'cliente': widget.numeroFichaAtual, // Usa a ficha atual controlada pelo app
+          'produto_id': widget.produto.id,
+          'quantidade': quantidade,
         },
-      ),
-    );
+        options: Options(
+          headers: {
+            'Accept': 'application/json',
+          },
+        ),
+      );
 
-    // O Dio considera respostas de sucesso no range de 200-299
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      // No Dio, o response.data já vem decodificado como um Map
-      final mensagem = response.data['mensagem'];
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final mensagem = response.data['mensagem'];
 
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mensagem),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } on DioException catch (e) {
+      String erroMensagem = 'Erro ao adicionar produto';
+      if (e.response != null && e.response?.data != null) {
+        erroMensagem = e.response?.data['mensagem'] ?? e.response?.data.toString() ?? erroMensagem;
+      }
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(mensagem),
-          backgroundColor: Colors.green,
+          content: Text(erroMensagem),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro inesperado: $e'),
+          backgroundColor: Colors.red,
         ),
       );
     }
-  // } on DioException catch (e) {
-  //   // O Dio tem um tratamento de erro específico muito bom
-  //   String erroMensagem = 'Erro ao adicionar produto';
-    
-  //   if (e.response != null && e.response?.data != null) {
-  //     // Captura a mensagem de erro enviada pelo Laravel (se houver)
-  //     erroMensagem = e.response?.data['mensagem'] ?? erroMensagem;
-  //   }
-
-  //   ScaffoldMessenger.of(context).showSnackBar(
-  //     SnackBar(
-  //       content: Text(erroMensagem),
-  //       backgroundColor: Colors.red,
-  //     ),
-  //   );
-  // } 
-  // Garanta que a linha abaixo tenha o "catch (e)" preenchido corretamente:
-}on DioException catch (e) {
-  // print('--- ERRO DETALHADO DA API (LARAVEL) ---');
-  // print('Status Code: ${e.response?.statusCode}');
-  // print('Dados retornados: ${e.response?.data}');
-  // print('---------------------------------------');
-
-  String erroMensagem = 'Erro ao adicionar produto';
-  
-  if (e.response != null && e.response?.data != null) {
-    erroMensagem = e.response?.data['mensagem'] ?? e.response?.data.toString() ?? erroMensagem;
   }
-
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(erroMensagem),
-      backgroundColor: Colors.red,
-    ),
-  );
-}
-  catch (e) {
-    // Captura qualquer outro erro inesperado
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Erro inesperado: $e'),
-        backgroundColor: Colors.red,
-      ),
-    );
-  }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -149,46 +124,43 @@ class _ProductCardState extends State<ProductCard> {
                 },
               ),
             ),
-      
             const SizedBox(height: 4),
-      
+
             // NOME
             Text(
               widget.produto.nome,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
                 fontSize: 13,
               ),
             ),
-      
+
             // DESCRIÇÃO
             Text(
-             widget.produto.descricao,
+              widget.produto.descricao,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 10,
               ),
             ),
-      
             const SizedBox(height: 4),
-      
+
             // PREÇO
-              Text(
-               'R\$ ${widget.produto.preco.toStringAsFixed(2)}',
-              style: TextStyle(
+            Text(
+              'R\$ ${widget.produto.preco.toStringAsFixed(2)}',
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
               ),
             ),
-      
             const Spacer(),
-      
+
             // QUANTIDADE
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -201,7 +173,6 @@ class _ProductCardState extends State<ProductCard> {
                     }
                   },
                 ),
-      
                 Text(
                   quantidade.toString(),
                   style: const TextStyle(
@@ -209,7 +180,6 @@ class _ProductCardState extends State<ProductCard> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-      
                 _quantityButton(
                   Icons.add,
                   () {
@@ -218,109 +188,100 @@ class _ProductCardState extends State<ProductCard> {
                 ),
               ],
             ),
-      
             const SizedBox(height: 4),
-      
+
             // BOTÃO ADICIONAR
-            // SizedBox(
-            //   width: double.infinity,
-            //   height: 28,
-            //   child: ElevatedButton(
-            //     onPressed: () {},
-            //     style: ElevatedButton.styleFrom(
-            //       backgroundColor: Colors.white,
-            //       foregroundColor: Colors.orange,
-            //       padding: EdgeInsets.zero,
-            //       shape: RoundedRectangleBorder(
-            //         borderRadius: BorderRadius.circular(8),
-            //       ),
-            //     ),
-            //     child: const Text(
-            //       "Adicionar",
-            //       style: TextStyle(
-            //         fontSize: 10,
-            //         fontWeight: FontWeight.bold,
-            //       ),
-            //     ),
-            //   ),
-            // ),
-            //SizedBox(
-//   width: double.infinity,
-//   height: 28,
-//   child: ElevatedButton(
-//     // A mágica acontece aqui chamando a função assíncrona
-//     onPressed: adicionarAoCarrinho, 
-//     style: ElevatedButton.styleFrom(
-//       backgroundColor: Colors.white,
-//       foregroundColor: Colors.orange,
-//       padding: EdgeInsets.zero,
-//       shape: RoundedRectangleBorder(
-//         borderRadius: BorderRadius.circular(8),
-//       ),
-//     ),
-//     child: const Text(
-//       "Adicionar",
-//       style: TextStyle(
-//         fontSize: 10,
-//         fontWeight: FontWeight.bold,
-//       ),
-//     ),
-//   ),
-// ),
-SizedBox(
-  width: double.infinity,
-  height: 28,
-  child: ElevatedButton(
-    onPressed: adicionarAoCarrinho, // Vincula a função aqui
-    style: ElevatedButton.styleFrom(
-      backgroundColor: Colors.white,
-      foregroundColor: Colors.orange,
-      padding: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-      ),
-    ),
-    child: const Text(
-      "Adicionar",
-      style: TextStyle(
-        fontSize: 10,
-        fontWeight: FontWeight.bold,
-      ),
-    ),
-  ),
-),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(0, 5, 0, 0),
-              child: SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const PageCarrinho(), // Nome da sua tela de destino
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.shopping_cart),
-                  label: const Text("Carrinho"),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white),
+            SizedBox(
+              width: double.infinity,
+              height: 28,
+              child: ElevatedButton(
+                onPressed: adicionarAoCarrinho,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.orange,
+                  padding: EdgeInsets.zero,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text(
+                  "Adicionar",
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
-            )
+            ),
+
+            // BOTÃO IR PARA O CARRINHO
+            // Padding(
+            //   padding: const EdgeInsets.fromLTRB(0, 5, 0, 0),
+            //   child: SizedBox(
+            //     width: double.infinity,
+            //     child: OutlinedButton.icon(
+            //       onPressed: () async {
+            //         // Abre a tela do carrinho e aguarda para ver se uma nova ficha vai retornar
+            //         final int? novaFicha = await Navigator.push<int>(
+            //           context,
+            //           MaterialPageRoute(
+            //             builder: (context) => PageCarrinho(fichaId: widget.numeroFichaAtual),
+            //           ),
+            //         );
+
+            //         // Se retornou um número incrementado do carrinho, atualiza o estado global/pai
+            //         if (novaFicha != null && mounted) {
+            //           widget.onFichaAtualizada(novaFicha);
+            //         }
+            //       },
+            //       icon: const Icon(Icons.shopping_cart, size: 16),
+            //       label: Text("Carrinho (${widget.numeroFichaAtual})"),
+            //       style: OutlinedButton.styleFrom(
+            //         foregroundColor: Colors.white,
+            //         side: const BorderSide(color: Colors.white),
+            //         padding: const EdgeInsets.symmetric(vertical: 2),
+            //       ),
+            //     ),
+            //   ),
+            // )
+            // BOTÃO IR PARA O CARRINHO (CORRIGIDO)
+Padding(
+  padding: const EdgeInsets.fromLTRB(0, 5, 0, 0),
+  child: SizedBox(
+    width: double.infinity,
+    child: OutlinedButton.icon(
+      onPressed: () async {
+        // Abre a tela do carrinho e aguarda para ver se uma nova ficha vai retornar
+        final int? novaFicha = await Navigator.push<int>(
+          context,
+          MaterialPageRoute(
+            // CORREÇÃO AQUI: Trocado 'fichaId' por 'fichaInicial'
+            builder: (context) => PageCarrinho(fichaInicial: widget.numeroFichaAtual),
+          ),
+        );
+
+        // Se retornou um número incrementado do carrinho, atualiza o estado global/pai
+        if (novaFicha != null && mounted) {
+          widget.onFichaAtualizada(novaFicha);
+        }
+      },
+      icon: const Icon(Icons.shopping_cart, size: 16),
+      label: Text("Carrinho"),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.white,
+        side: const BorderSide(color: Colors.white),
+        padding: const EdgeInsets.symmetric(vertical: 2),
+      ),
+    ),
+  ),
+)
           ],
         ),
       ),
     );
   }
 
-  Widget _quantityButton(
-    IconData icon,
-    VoidCallback onTap,
-  ) {
+  Widget _quantityButton(IconData icon, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
       child: Container(

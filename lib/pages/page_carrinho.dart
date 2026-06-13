@@ -8,7 +8,12 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 class PageCarrinho extends StatefulWidget {
-  const PageCarrinho({super.key});
+  final int fichaInicial; // Recebe o número da ficha atual vindo da tela de produtos
+
+  const PageCarrinho({
+    super.key, 
+    this.fichaInicial = 1, // Se não for passado nada, inicia em 1 por segurança
+  });
 
   @override
   State<PageCarrinho> createState() => _PageCarrinhoState();
@@ -19,7 +24,8 @@ class _PageCarrinhoState extends State<PageCarrinho>
   late AnimationController _controller;
   final ScrollController _scrollController = ScrollController();
   final dio = Dio();
-  int Cliente = 1;
+  
+  late int Cliente; // Ficha/Comanda controlada localmente nesta tela
   
   // Estados da página
   List<dynamic> itensCarrinho = [];
@@ -42,6 +48,9 @@ class _PageCarrinhoState extends State<PageCarrinho>
   @override
   void initState() {
     super.initState();
+    
+    // Inicializa a variável local com o valor repassado pelo construtor
+    Cliente = widget.fichaInicial;
 
     _controller = AnimationController(
       vsync: this,
@@ -61,21 +70,25 @@ class _PageCarrinhoState extends State<PageCarrinho>
   }
 
   Future<void> atualizarDadosDoServidor() async {
-    try {
-      final String url = '$obterBaseUrl/api/carrinho';
-      final response = await dio.get(url);
+  try {
+    final String url = '$obterBaseUrl/api/carrinho';
+    final response = await dio.get(
+      url,
+      queryParameters: {
+        'cliente': Cliente, // <--- Passa o número da ficha atual na URL (?cliente=X)
+      },
+    );
 
-      if (response.statusCode == 200 && response.data != null && mounted) {
-        setState(() {
-          itensCarrinho = List.from(response.data['itens'] ?? []);
-          totalCarrinho = double.tryParse(response.data['total_carrinho'].toString()) ?? 0.0;
-        });
-      }
-    } catch (e) {
-      debugPrint('Erro ao sincronizar com servidor: $e');
+    if (response.statusCode == 200 && response.data != null && mounted) {
+      setState(() {
+        itensCarrinho = List.from(response.data['itens'] ?? []);
+        totalCarrinho = double.tryParse(response.data['total_carrinho'].toString()) ?? 0.0;
+      });
     }
+  } catch (e) {
+    debugPrint('Erro ao sincronizar com servidor: $e');
   }
-
+}
   Future<void> alterarQuantidade(int produtoId, int novaQuantidade) async {
     if (novaQuantidade < 1) {
       excluirItem(produtoId);
@@ -96,7 +109,7 @@ class _PageCarrinhoState extends State<PageCarrinho>
 
     try {
       await dio.post('$obterBaseUrl/api/carrinho/atualizar', data: {
-        'cliente': 1,
+        'cliente': Cliente, // Usa a ficha atual dinâmica
         'produto_id': produtoId,
         'quantidade': novaQuantidade,
       });
@@ -113,7 +126,7 @@ class _PageCarrinhoState extends State<PageCarrinho>
 
     try {
       await dio.post('$obterBaseUrl/api/carrinho/remover', data: {
-        'cliente': 1,
+        'cliente': Cliente, // Usa a ficha atual dinâmica
         'produto_id': produtoId,
       });
     } catch (e) {
@@ -162,16 +175,21 @@ class _PageCarrinhoState extends State<PageCarrinho>
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 10),
-                    child: Text(
-                      "Meu Carrinho",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          "Meu Carrinho", // Mostra visualmente a ficha ativa
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   Expanded(
@@ -406,30 +424,37 @@ class _PageCarrinhoState extends State<PageCarrinho>
                     final response = await dio.post(
                       rotaFinal,
                       data: {
-                        'cliente': Cliente,
+                        'cliente': Cliente, // Envia a comanda atual correta para a API
                       },
                     );
 
                     if ((response.statusCode == 201 || response.statusCode == 200) && mounted) {
                       final int idGerado = response.data['compra_id'] ?? 0;
-                      final int clienteAtual = Cliente;
+                      final int clienteFinalizado = Cliente;
 
-                      // Abre a interface do PDF nativa
-                      await gerarPdfCompraLocal(idGerado, clienteAtual);
+                      // Abre a interface nativa do PDF passando a ficha que foi fechada
+                      await gerarPdfCompraLocal(idGerado, clienteFinalizado);
                       
+                      // Guarda qual será o número da próxima ficha rodada
+                      final int proximaFicha = clienteFinalizado + 1;
+
                       setState(() {
                         itensCarrinho = [];
                         totalCarrinho = 0.0;
                         carregando = false;
-                        Cliente++;
+                        Cliente = proximaFicha; // Prepara o estado da tela para o número seguinte
                       });
 
+                      if (!mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Compra finalizada com sucesso!'),
+                        SnackBar(
+                          content: Text('Compra finalizada! Próxima ficha: #$proximaFicha'),
                           backgroundColor: Colors.green,
                         ),
                       );
+
+                      // RETORNO CRUCIAL: Devolve o incremento para a tela principal (Cards atualizados)
+                      Navigator.pop(context, proximaFicha);
                     }
                   } catch (e) {
                     if (mounted) {
@@ -484,7 +509,7 @@ class _PageCarrinhoState extends State<PageCarrinho>
           return pw.Padding(
             padding: const pw.EdgeInsets.all(20),
             child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start, // 1. CORRIGIDO: Nome correto da propriedade no pacote PDF
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 pw.Container(
                   width: double.infinity,
@@ -499,7 +524,7 @@ class _PageCarrinhoState extends State<PageCarrinho>
                 ),
                 pw.SizedBox(height: 20),
                 pw.Text('Compra ID: #$idCompra', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                pw.Text('Cliente ID: #$idCliente'),
+                pw.Text('Ficha / Comanda ID: #$idCliente', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
                 pw.Text('Status: Pago / Finalizado'),
                 pw.Text('Data: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}'),
                 pw.SizedBox(height: 20),
@@ -516,7 +541,6 @@ class _PageCarrinhoState extends State<PageCarrinho>
                         pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Subtotal', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                       ],
                     ),
-                    // 2. CORRIGIDO: Mapeamento tipado explicitamente como TableRow para o pw.Table aceitar
                     ...itensCarrinho.map<pw.TableRow>((item) {
                       final produto = item['produto'];
                       return pw.TableRow(
@@ -535,7 +559,7 @@ class _PageCarrinhoState extends State<PageCarrinho>
                           ),
                         ],
                       );
-                    }).toList(), // Garante a conversão para lista limpa
+                    }).toList(),
                   ],
                 ),
                 pw.SizedBox(height: 30),

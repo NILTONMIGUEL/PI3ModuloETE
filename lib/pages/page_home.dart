@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:pi_3_modulo/custons_edit/button_menu_neon.dart';
@@ -5,7 +7,6 @@ import 'package:pi_3_modulo/custons_edit/card_product.dart';
 import 'package:pi_3_modulo/custons_edit/neonBorderPainter.dart';
 import 'package:pi_3_modulo/custons_edit/video_loop.dart';
 import 'package:pi_3_modulo/data/models/Produto.dart';
-
 
 class PageHome extends StatefulWidget {
   const PageHome({super.key});
@@ -27,6 +28,22 @@ class _PageHomeState extends State<PageHome>
   int pagina = 1;
   int categoriaSelecionada = 1;
 
+  // CONTROLE CENTRAL: Guarda qual é a ficha ativa no momento no app
+  int numeroFicha = 1;
+
+  // FUNÇÃO INTELIGENTE: Altera o IP dinamicamente para o dispositivo de teste
+  String get obterBaseUrl {
+    if (kIsWeb) {
+      return 'http://localhost:8000';
+    }
+    try {
+      if (Platform.isAndroid) {
+        return 'http://10.0.2.2:8000';
+      }
+    } catch (_) {}
+    return 'http://localhost:8000';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -47,36 +64,43 @@ class _PageHomeState extends State<PageHome>
     });
   }
 
-Future<void> carregarProdutos() async {
-  if (carregando) return;
-
-  carregando = true;
-
-  try {
-    final response = await dio.get(
-      'http://localhost:8000/api/comidas',
-      queryParameters: {
-        'page': pagina,
-        'categoria': categoriaSelecionada,
-      },
-    );
-
-    final List dados = response.data['produtos'];//['data'];
-
-    final novosProdutos =
-        dados.map((e) => Produto.fromJson(e)).toList();
+  Future<void> carregarProdutos() async {
+    if (carregando) return;
 
     setState(() {
-      produtos.clear();
-      produtos.addAll(novosProdutos);
-      // pagina++;
+      carregando = true;
     });
-  } catch (e) {
-    debugPrint(e.toString());
-  }
 
-  carregando = false;
-}
+    try {
+      final response = await dio.get(
+        '$obterBaseUrl/api/comidas', // Usa a BaseURL inteligente corrigida
+        queryParameters: {
+          'page': pagina,
+          'categoria': categoriaSelecionada,
+        },
+      );
+
+      final List dados = response.data['produtos'];
+
+      final novosProdutos =
+          dados.map((e) => Produto.fromJson(e)).toList();
+
+      if (mounted) {
+        setState(() {
+          produtos.clear();
+          produtos.addAll(novosProdutos);
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro ao carregar produtos: ${e.toString()}");
+    } finally {
+      if (mounted) {
+        setState(() {
+          carregando = false;
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -90,21 +114,21 @@ Future<void> carregarProdutos() async {
     return Scaffold(
       body: Stack(
         children: [
-            Positioned.fill(
-              child: ColorFiltered(
-                colorFilter: ColorFilter.mode(
-                  Colors.black.withOpacity(0.77),
-                  BlendMode.darken
-                ),
-                child: Opacity(
-                  opacity: 0.8,
-                  child: Image.asset(
-                    'assets/imagens/background.png',
-                    fit: BoxFit.cover,
-                  ),
+          Positioned.fill(
+            child: ColorFiltered(
+              colorFilter: ColorFilter.mode(
+                Colors.black.withOpacity(0.77),
+                BlendMode.darken,
+              ),
+              child: Opacity(
+                opacity: 0.8,
+                child: Image.asset(
+                  'assets/imagens/background.png',
+                  fit: BoxFit.cover,
                 ),
               ),
             ),
+          ),
           AnimatedBuilder(
             animation: _controller,
             builder: (context, child) {
@@ -119,7 +143,7 @@ Future<void> carregarProdutos() async {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  // Vídeo
+                  // Vídeo Banner
                   Container(
                     width: double.infinity,
                     height: 230,
@@ -144,9 +168,8 @@ Future<void> carregarProdutos() async {
                         selecionado: categoriaSelecionada == 1,
                         onTap: () {
                           setState(() {
-                            pagina= 1;
+                            pagina = 1;
                             produtos.clear();
-
                             categoriaSelecionada = 1;
                           });
                           carregarProdutos();
@@ -160,7 +183,6 @@ Future<void> carregarProdutos() async {
                             pagina = 1;
                             produtos.clear();
                             categoriaSelecionada = 2;
-                            
                           });
                           carregarProdutos();
                         },
@@ -170,11 +192,10 @@ Future<void> carregarProdutos() async {
                         selecionado: categoriaSelecionada == 3,
                         onTap: () {
                           setState(() {
-                            pagina = 1; 
+                            pagina = 1;
                             produtos.clear();
                             categoriaSelecionada = 3;
                           });
-
                           carregarProdutos();
                         },
                       ),
@@ -183,7 +204,7 @@ Future<void> carregarProdutos() async {
 
                   const SizedBox(height: 25),
 
-                  // Lista de produtos com scroll infinito
+                  // Lista de produtos com scroll infinito e Ficha Sincronizada
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(0, 15, 0, 0),
@@ -198,16 +219,20 @@ Future<void> carregarProdutos() async {
                               children: List.generate(
                                 produtos.length,
                                 (index) => ProductCard(
-                                  produto:produtos[index],
+                                  produto: produtos[index],
+                                  numeroFichaAtual: numeroFicha, // Passa a ficha controlada pela Home
+                                  onFichaAtualizada: (novaFicha) {
+                                    // Callback executado quando o carrinho fechar a comanda
+                                    setState(() {
+                                      numeroFicha = novaFicha; 
+                                    });
+                                  },
                                 ),
                               ),
                             ),
-                      
                             const SizedBox(height: 25),
-                      
                             if (carregando)
-                              const CircularProgressIndicator(),
-                      
+                              const CircularProgressIndicator(color: Colors.orange),
                             const SizedBox(height: 25),
                           ],
                         ),
